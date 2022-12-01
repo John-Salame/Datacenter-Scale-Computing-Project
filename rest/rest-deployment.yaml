@@ -1,0 +1,25 @@
+apiVersion: apps/v1 #  for k8s versions before 1.9.0 use apps/v1beta2  and before 1.8.0 use extensions/v1beta1
+kind: Deployment
+metadata:
+  name: rest-deployment
+spec:
+  selector:
+    matchLabels:
+      app: rest
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: rest
+    spec:
+      containers:
+      - name: master
+        image: rest:latest
+        imagePullPolicy: Never
+        resources:
+          requests:
+            cpu: 100m
+            memory: 400Mi
+        ports:
+        - containerPort: 5000
+---

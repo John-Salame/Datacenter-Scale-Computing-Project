@@ -1,0 +1,8 @@
+FROM python:3.8
+
+WORKDIR /rest
+RUN pip3 install --upgrade jsonpickle requests flask minio
+COPY rest.py rest.py
+
+ENTRYPOINT ["/bin/bash", "--login", "-c"]
+CMD ["python3 rest.py"]

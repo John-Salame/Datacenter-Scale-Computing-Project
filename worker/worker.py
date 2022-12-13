@@ -41,8 +41,10 @@ def list_buckets():
 
 # create an error response for error code 400 (client-side issue)
 def create_bad_request(message):
-    return f'<title>400 Bad Request</title>\n<h1>Bad Request</h1><p>{message}</p>'
+    return f'<!doctype html><html lang=en><title>400 Bad Request</title>\n<h1>Bad Request</h1><p>{message}</p>'
 
+def create_internal_error(message):
+    return f'<!doctype html><html lang=en><title>500 Internal Server Error</title>\n<h1>Internal Server Error</h1><p>{message}</p>'
 
 '''Logic for creating normal maps'''
 
@@ -148,7 +150,7 @@ class normalMapServicer(normalMap_gRPC.normalMapServicer):
         k = 3 # radius of kernel
         # pull the image from Minio
         input_bucket = 'input'
-        output_bucket = 'first_pass'
+        output_bucket = 'first-pass'
         in_file = request.inFile
         out_file = request.outFile
         response = minio_client.get_object(input_bucket, in_file)
@@ -192,18 +194,36 @@ class normalMapServicer(normalMap_gRPC.normalMapServicer):
 
         # upload the image to Minio
         im = Image.fromarray(normal_map)
+        extension = out_file[out_file.rindex('.'):] # file extension, including the dot
         log(f'image before saving has data type {type(im)}')
         sys.stdout.flush()
-        # save to image stream instead of saving to a temp file
-        with io.BytesIO() as img_stream:
-            im.save(img_stream)
-        file_size = img_stream.getbuffer().nbytes
-        log(f'Saving {in_filename}, file size {file_size} = {round(file_size / 1000, 2)} KB = {round(file_size / 1000000, 1)} MB')
-        minio_client.put_object(output_bucket, out_filename, img_stream, file_size)
+        # save to image, upload, then delete the local image
+        # note: there is a race condition here which could cause issues, so I should put a catch around the deletion as well as the uploading
+        # I don't really have a good way to deal with the race condition.
+        err_msg = ''
+        im.save(out_file) # extension[1:]
+        try:
+            file_size = os.path.getsize(out_file)
+        except Exceptoin as e:
+            err_msg = f'Error getting file size of file to upload (race condition area): {e}'
+        log(f'Saving {out_file}, file size {file_size} = {round(file_size / 1000, 2)} KB = {round(file_size / 1000000, 1)} MB')
+        try:
+            minio_client.fput_object(output_bucket, out_file, out_file)
+        except Exception as e:
+            err_msg = f'Worker firstPass: Error uploading to output bucket: {e}'
+        try:
+            os.unlink(out_file)
+        except Exception as e:
+            err_msg = f'Error deleting file (race condition area): {e}'
+        if err_msg:
+            log(err_msg)
+            sys.stdout.flush()
+            return normalMap_proto.restResponse(msg=create_internal_error(err_msg), status=500)
 
         end = time.perf_counter()
         delta = (end - start)*1000
         log(f"First Passthrough (worker) took {delta} ms")
+        sys.stdout.flush()
         # return success 200
         return normalMap_proto.restResponse(msg=f'Worker {hostname} created normal map {out_file} for {in_file}', status=200)
 

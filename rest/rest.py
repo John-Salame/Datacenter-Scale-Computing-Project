@@ -38,7 +38,10 @@ def list_buckets():
 
 # create an error response for error code 400 (client-side issue)
 def create_bad_request(message):
-    return f'<title>400 Bad Request</title>\n<h1>Bad Request</h1><p>{message}</p>'
+    return f'<!doctype html><html lang=en><title>400 Bad Request</title>\n<h1>Bad Request</h1><p>{message}</p>'
+
+def create_internal_error(message):
+    return f'<!doctype html><html lang=en><title>500 Internal Server Error</title>\n<h1>Internal Server Error</h1><p>{message}</p>'
 
 '''gRPC Client Implementation'''
 def initiateWorkerFirstPassthrough(stub, workerInput):
@@ -64,7 +67,7 @@ def produceFirstPassthrough():
     start = time.perf_counter()
     r = request
     input_bucket = 'input'
-    output_bucket = 'first_pass'
+    output_bucket = 'first-pass'
     '''
     What to look out for:
     Content-Type: multipart/form-data; boundary=---------------------------5926289141479646928502894430

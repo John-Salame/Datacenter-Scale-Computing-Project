@@ -22,3 +22,9 @@ With only Minio file upload (no database/using cached results, no gRPC, no proto
 * Space (Minio): 192.1 KB (actual image size: 196.7 KB) for 256x256x24 byte RGB bitmap image.
 Note: Minio is set to encrypt its contents. Perhaps this somehow shrunk the file size. Everything looks correct when I download it.
 
+With firstPass (but no MongoDB, no protobuf in Minio, and no HTML content returned), these are the results:
+* Total Request Time: 123.43 ms average using the `time_program.py` script.
+* Time taken by REST server: 90.56 ms (averaging the last 5 results)
+* Time taken by worker: 51.78 ms (averaging the last 5 results)
+* This means REST server independently took 90.56-51.78 = 38.78 ms to run while not waiting for the worker to finish.
+

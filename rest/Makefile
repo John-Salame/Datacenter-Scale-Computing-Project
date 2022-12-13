@@ -1,11 +1,12 @@
-VERSION=v4
-DOCKERUSER="gcr.io/csci-5253-datacenter-scale"
+VERSION=v1
+DOCKERUSER=""
 
 build:
 	docker build -f Dockerfile-rest -t rest .
+	docker tag rest rest:$(VERSION)
 
 push:
-	docker tag demucs-rest $(DOCKERUSER)/rest:$(VERSION)
+	docker tag rest $(DOCKERUSER)/rest:$(VERSION)
 	docker push $(DOCKERUSER)/rest:$(VERSION)
-	docker tag demucs-rest $(DOCKERUSER)/rest:latest
+	docker tag rest $(DOCKERUSER)/rest:latest
 	docker push $(DOCKERUSER)/rest:latest

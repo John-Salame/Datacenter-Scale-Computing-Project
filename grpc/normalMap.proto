@@ -1,0 +1,23 @@
+// John Salame
+
+syntax = "proto3";
+
+service normalMap {
+    rpc normalMapFirstPassthrough(gRPCWorkerInput) returns (restResponse) {}
+    rpc normalMapFinalPassthrough(gRPCWorkerInput) returns (restResponse) {}
+}
+
+message gRPCWorkerInput {
+    string inFile = 1;
+    string outFile = 2;
+    optional uint32 adjustedAvgRed = 3;
+}
+
+message restResponse {
+    uint32 status = 1;
+    string msg = 2;
+}
+
+message image {
+    bytes img = 1;
+}

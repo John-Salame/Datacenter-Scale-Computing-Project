@@ -8,10 +8,14 @@ import sys
 import io
 import time
 
+import grpc
+import normalMap_pb2 as normalMap_proto
+import normalMap_pb2_grpc as normalMap_gRPC
+
 app = Flask(__name__)
 minio_client = Minio("minio:9000", secure=False, access_key='rootuser', secret_key='rootpass123') # use minio as the hostname of the Minio server to talk with
 
-# log the start of the program
+# log the start of the program and log the hostname (should match pod name)
 print("REST program starting")
 os.system("hostname > hostname.txt")
 with open("hostname.txt", "r") as f:
@@ -32,9 +36,16 @@ def list_buckets():
     except Exception as e:
         log(f'Error listing Minio buckets: {e}')
 
-# create an error response
+# create an error response for error code 400 (client-side issue)
 def create_bad_request(message):
     return f'<title>400 Bad Request</title>\n<h1>Bad Request</h1><p>{message}</p>'
+
+'''gRPC Client Implementation'''
+def initiateWorkerFirstPassthrough(stub, workerInput):
+    return stub.normalMapFirstPassthrough(workerInput)
+
+def initiateWorkerFinalPassthrough(stub, workerInput):
+    return stub.normalMapFinalPassthrough(workerInput)
 
 '''Begin routing'''
 # index page, which also has a form to upload image files
@@ -95,12 +106,18 @@ def produceFirstPassthrough():
     # https://stackoverflow.com/questions/5297448/how-to-get-md5-sum-of-a-string-using-python
     extension = in_filename[in_filename.rindex('.'):]
     out_filename = hashlib.md5(img).hexdigest() + extension
-    log(f'(TO-DO) Sending {in_filename} to worker to produce intermediate normal map {out_filename}')
+    log(f'Sending {in_filename} to worker to produce intermediate normal map {out_filename}')
+    # Create a new gRPC channel for each request in case the old worker dies
+    # later, maybe I can make a global permanent channel that tries to repair itself here if it dies
+    with grpc.insecure_channel('worker-svc:5001') as channel:
+        normalMapStub = normalMap_gRPC.normalMapStub(channel)
+        workerInput = normalMap_proto.gRPCWorkerInput(inFile=in_filename, outFile=out_filename)
+        response = initiateWorkerFirstPassthrough(normalMapStub, workerInput)
 
     end = time.perf_counter()
     delta = (end - start)*1000
-    log(f"First Passthrough took {delta} ms")
-    return Response(response='OK', status=200, mimetype='text/plain')
+    log(f"First Passthrough (REST) took {delta} ms")
+    return Response(response=response.msg, status=response.status, mimetype='text/plain')
 
 # start flask app
 app.run(host="0.0.0.0", port=5000)

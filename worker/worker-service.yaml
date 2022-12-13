@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker-svc
+  labels:
+    app: worker
+spec:
+  selector:
+    app: worker
+  ports:
+  - name: worker
+    port: 5001
+    targetPort: 5001

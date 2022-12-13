@@ -1,16 +1,15 @@
 # Dependency: Make sure you build the grpc Docker image first
 FROM normal-map-protobuf:latest
 
-EXPOSE 5000
-
 # Install additional dependencies into virtual environment before copying to /rest
-RUN venv/bin/pip3 install --upgrade jsonpickle requests flask minio
-RUN mkdir /rest
-RUN cp -r ./* /rest
+EXPOSE 5001
+RUN venv/bin/pip3 install --upgrade matplotlib numpy minio
+RUN mkdir /worker
+RUN cp -r ./* /worker
 
-WORKDIR /rest
-COPY rest.py rest.py
+WORKDIR /worker
+COPY worker.py .
 RUN ls
 
 ENTRYPOINT ["/bin/bash", "--login", "-c"]
-CMD ["venv/bin/python3 rest.py"]
+CMD ["venv/bin/python3 worker.py"]

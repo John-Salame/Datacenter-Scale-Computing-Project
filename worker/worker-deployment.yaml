@@ -1,25 +1,25 @@
 apiVersion: apps/v1 #  for k8s versions before 1.9.0 use apps/v1beta2  and before 1.8.0 use extensions/v1beta1
 kind: Deployment
 metadata:
-  name: rest-deployment
+  name: worker-deployment
 spec:
   selector:
     matchLabels:
-      app: rest
+      app: worker
   replicas: 2
   template:
     metadata:
       labels:
-        app: rest
+        app: worker
     spec:
       containers:
       - name: master
-        image: rest:latest
+        image: worker:latest
         imagePullPolicy: Never
         resources:
           requests:
             cpu: 100m
             memory: 300Mi
         ports:
-        - containerPort: 5000
+        - containerPort: 5001
 ---

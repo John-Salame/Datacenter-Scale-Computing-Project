@@ -12,3 +12,10 @@ The REST routes are:
 Saving two files with the same name will overwrite the first one. The Minio data store will still have all the normal maps because the names of the normal maps are based on image hashes. However, the input files will not be preserved if multiple files with the same name are uploaded. 
 If I have time, maybe I could add a feature where the web server returns a bunch of images if the choice is ambigious and then lets you choose one to use as input. It would send a pairing of input image name (in an HTML image tag) and intermediate normal map name (as an image ID or attribute).
 
+## Time and Space Case Studies
+With only Minio file upload (no database/using cached results, no gRPC, no protobuf, no HTML content returned), these are the results:
+* Time: 37.26 ms average over 5 iterations (according to the timers in rest.py), or 65.19 ms average using the `time_program.py` script.
+* * Using `time python3 time_program.py` in the command line, we see that 45% of the time was taken by system and 55% of time was taken by the user, so the user took roughly 35.8 seconds per request.
+* Space (Minio): 192.1 KB (actual image size: 196.7 KB) for 256x256x24 byte RGB bitmap image.
+Note: Minio is set to encrypt its contents. Perhaps this somehow shrunk the file size. Everything looks correct when I download it.
+

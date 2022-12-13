@@ -6,6 +6,7 @@ import hashlib
 import os
 import sys
 import io
+import time
 
 app = Flask(__name__)
 minio_client = Minio("minio:9000", secure=False, access_key='rootuser', secret_key='rootpass123') # use minio as the hostname of the Minio server to talk with
@@ -49,6 +50,7 @@ def index():
 
 @app.route('/produceFirstPassthrough', methods=['POST'])
 def produceFirstPassthrough():
+    start = time.perf_counter()
     r = request
     input_bucket = 'input'
     output_bucket = 'first_pass'
@@ -95,6 +97,9 @@ def produceFirstPassthrough():
     out_filename = hashlib.md5(img).hexdigest() + extension
     log(f'(TO-DO) Sending {in_filename} to worker to produce intermediate normal map {out_filename}')
 
+    end = time.perf_counter()
+    delta = (end - start)*1000
+    log(f"First Passthrough took {delta} ms")
     return Response(response='OK', status=200, mimetype='text/plain')
 
 # start flask app

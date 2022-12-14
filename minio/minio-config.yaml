@@ -26,9 +26,5 @@ persistence:
 ##
 resources:
   requests:
-    memory: 0.5Gi
+    memory: 0.25Gi
 
-##
-buckets:
-  - name: demucs-bucket
-    policy: public

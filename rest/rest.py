@@ -23,18 +23,18 @@ with open("hostname.txt", "r") as f:
 print(f"Hostname: {hostname}")
 
 # helper function - print log that is visible to kubectl logs
-def log(msg):
-    print(msg, file=sys.stderr)
+def log(request_id, msg):
+    print(f'{request_id} {msg}', file=sys.stderr)
 
 # list the Minio buckets that exist
-def list_buckets():
+def list_buckets(request_id):
     try:
-        log('list Minio buckets')
+        log(request_id, 'list Minio buckets')
         buckets = buckets = minio_client.list_buckets()
         for bucket in buckets:
-            log(f'* Found bucket: {bucket}')
+            log(request_id, f'* Found bucket: {bucket}')
     except Exception as e:
-        log(f'Error listing Minio buckets: {e}')
+        log(request_id, f'Error listing Minio buckets: {e}')
 
 # create an error response for error code 400 (client-side issue)
 def create_bad_request(message):
@@ -75,41 +75,41 @@ def produceFirstPassthrough():
     content_type = request.headers['Content-Type']
     if not 'multipart/form-data' in content_type:
         err_msg = create_bad_request('The form must send an image with multipart/form-data encoding.')
-        return Response(response=err_msg, status=400, mimetype='text/plain')
+        return Response(response=err_msg, status=400, mimetype='text/html')
     # Easily dealing with multipart/form-data: https://www.techiediaries.com/python-requests-upload-file-post-multipart-form-data/
-    log('File is {}'.format(r.files['file']))
     my_file = r.files['file']
     img = my_file.read() # should be 'bytes object' binary data matching file contents
     in_filename = my_file.filename
-    log(f'/produceFirstPassthrough received file {in_filename}')
+    request_id = 'fp' + hashlib.md5((str(start) + in_filename).encode('utf-8')).hexdigest()
+    log(request_id, f'/produceFirstPassthrough received file {in_filename}')
 
     # now, upload the image to Minio
 
     # First, create the bucket if it does not exist
     try:
         if not minio_client.bucket_exists(input_bucket):
-            log(f'creating bucket "{input_bucket}"')
+            log(request_id, f'creating bucket "{input_bucket}"')
             minio_client.make_bucket(input_bucket)
-            list_buckets()
+            list_buckets(request_id)
     except Exception as e:
-        log(f'error creating bucket or checking if it exists: {e}')
-        list_buckets()
+        log(request_id, f'error creating bucket {input_bucket} or checking if it exists: {e}')
+        list_buckets(request_id)
 
     # Then, use BytesIO so we can upload the image without creating temporary files
     '''TO-DO: use protobuf to compress the image before sending to Minio'''
     img_stream = io.BytesIO(img)
     # https://stackoverflow.com/questions/26827055/python-how-to-get-bytesio-allocated-memory-length
     file_size = img_stream.getbuffer().nbytes
-    log(f'Saving {in_filename}, file size {file_size} = {round(file_size / 1000, 2)} KB = {round(file_size / 1000000, 1)} MB')
+    log(request_id, f'Saving {in_filename}, file size {file_size} = {round(file_size / 1000, 2)} KB = {round(file_size / 1000000, 1)} MB')
     # https://stackoverflow.com/questions/55223401/minio-python-client-upload-bytes-directly
     minio_client.put_object(input_bucket, in_filename, img_stream, file_size)
-    log(f'Upload input file compete! ({in_filename})')
+    log(request_id, f'Upload input file compete! ({in_filename})')
 
     # Name the output (first passthrough) file based on the hash of the image
     # https://stackoverflow.com/questions/5297448/how-to-get-md5-sum-of-a-string-using-python
     extension = in_filename[in_filename.rindex('.'):]
     out_filename = hashlib.md5(img).hexdigest() + extension
-    log(f'Sending {in_filename} to worker to produce intermediate normal map {out_filename}')
+    log(request_id, f'Signal firstPassthrough worker: {in_filename} -> {out_filename}')
     # Create a new gRPC channel for each request in case the old worker dies
     # later, maybe I can make a global permanent channel that tries to repair itself here if it dies
     with grpc.insecure_channel('worker-svc:5001') as channel:
@@ -119,8 +119,8 @@ def produceFirstPassthrough():
 
     end = time.perf_counter()
     delta = (end - start)*1000
-    log(f"First Passthrough (REST) took {delta} ms")
-    return Response(response=response.msg, status=response.status, mimetype='text/plain')
+    log(request_id, f"First Passthrough (REST) took {delta} ms")
+    return Response(response=response.msg, status=response.status, mimetype='text/html')
 
 # start flask app
 app.run(host="0.0.0.0", port=5000)

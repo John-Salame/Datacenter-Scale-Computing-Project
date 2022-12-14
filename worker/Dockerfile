@@ -12,4 +12,4 @@ COPY worker.py .
 RUN ls
 
 ENTRYPOINT ["/bin/bash", "--login", "-c"]
-CMD ["venv/bin/python3 worker.py"]
+CMD ["venv/bin/python3 worker.py > /dev/null"]

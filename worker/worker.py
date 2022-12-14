@@ -7,37 +7,42 @@ import os
 from PIL import Image
 import io
 import time
+import random
+import hashlib
 
 from minio import Minio
 import grpc
 import normalMap_pb2 as normalMap_proto
 import normalMap_pb2_grpc as normalMap_gRPC
 
-# Put minio client in the closure of all the functions
+# Globals: put minio client and container hostname in the closure of all the functions
 minio_client = Minio("minio:9000", secure=False, access_key='rootuser', secret_key='rootpass123') # use minio as the hostname of the Minio server to talk with
-
-# log the start of the program and log the hostname (should match pod name)
-print("Worker program starting")
 os.system("hostname > hostname.txt")
 with open("hostname.txt", "r") as f:
     hostname = f.read()
-print(f"Hostname: {hostname}")
-
 
 '''Helper functions'''
 # helper function - print log that is visible to kubectl logs
-def log(msg):
-    print(msg)
+def log(request_id, msg):
+    print(f'{request_id} {msg}', file=sys.stderr)
+
+# print how long the function took to run
+def print_time(request_id, start):
+    end = time.perf_counter()
+    delta = (end - start)*1000
+    log(request_id, f"First Passthrough (worker) took {delta} ms")
+    log('-', "--------------------------------------------")
+    sys.stderr.flush()
 
 # list the Minio buckets that exist
-def list_buckets():
+def list_buckets(request_id):
     try:
-        log('list Minio buckets')
+        log(request_id, 'list Minio buckets')
         buckets = buckets = minio_client.list_buckets()
         for bucket in buckets:
-            log(f'* Found bucket: {bucket}')
+            log(request_id, f'* Found bucket: {bucket}')
     except Exception as e:
-        log(f'Error listing Minio buckets: {e}')
+        log(request_id, f'Error listing Minio buckets: {e}')
 
 # create an error response for error code 400 (client-side issue)
 def create_bad_request(message):
@@ -45,6 +50,16 @@ def create_bad_request(message):
 
 def create_internal_error(message):
     return f'<!doctype html><html lang=en><title>500 Internal Server Error</title>\n<h1>Internal Server Error</h1><p>{message}</p>'
+
+def rest_response(request_id, start, msg, status):
+    html_constructor = {
+        200: lambda msg: '<p>' + msg + '</p>',
+        400: lambda msg: create_bad_request(msg),
+        500: lambda msg: create_internal_error(msg)
+    }
+    log(request_id, msg)
+    print_time(request_id, start)
+    return normalMap_proto.restResponse(msg=html_constructor[status](msg), status=status)
 
 '''Logic for creating normal maps'''
 
@@ -153,21 +168,30 @@ class normalMapServicer(normalMap_gRPC.normalMapServicer):
         output_bucket = 'first-pass'
         in_file = request.inFile
         out_file = request.outFile
-        response = minio_client.get_object(input_bucket, in_file)
-        log(f'Minio get object data type: {type(response)}')
-        sys.stdout.flush()
-        img_raw = response.data # img_raw is still in the file format, not a numpy array
-        img_stream = io.BytesIO(img_raw)
-        log(f'Image data type: {type(response.data)}')
-        sys.stdout.flush()
+        request_id = 'fp' + hashlib.md5((str(start) + out_file).encode('utf-8')).hexdigest()
+        log(request_id, "handle first passthrough")
+        if os.path.exists(out_file):
+            # if the file already exists, then some other thread is working on uploading it.
+            # skip the upload and just return 200 OK
+            # the danger is that nobody will ever upload the file if one worker fails to unlink the local file
+            # Therefore, later in the code, we try to unlink the file until is works.
+            return rest_response(request_id, start, msg=f'Worker {hostname} creating normal map {out_file} for {in_file} in another thread', status=200)
         try:
+            # response is a urllib3 response object; we get the file as response.data.
+            response = minio_client.get_object(input_bucket, in_file)
+            img_raw = response.data # img_raw is still in the file format as a bytes object, not a numpy array of RGB values
+            img_stream = io.BytesIO(img_raw)
+            file_size = img_stream.getbuffer().nbytes
+            log(request_id, f'downloaded {in_file}, file size {file_size} = {round(file_size / 1000, 2)} KB = {round(file_size / 1000000, 1)} MB')
+        except Exception as e:
+            err_msg = f'error downloading {in_file} from Minio: {e}'
+            return rest_response(request_id, start, msg=err_msg, status=500)
+        try:
+            # turn into numpy array of RGB values
             img = np.asarray(Image.open(img_stream))
         except Exception as e:
-            return normalMap_proto.restResponse(msg=create_bad_request(f'File {in_file} is not an image!'), status=400)
-        log(f'After opening, image has type {type(img)}')
-        sys.stdout.flush()
-        log(img.shape)
-        sys.stdout.flush()
+            err_msg = f'File {in_file} is not an image!'
+            return rest_response(request_id, start, msg=err_msg, status=400)
         # keep intensities only (b here stands for brightness)
         img_b = np.zeros((img.shape[0], img.shape[1]), dtype=np.uint8)
         img_b = 0.33*img[:,:,0] + 0.33*img[:,:,1] + 0.33*img[:,:,2]
@@ -185,50 +209,56 @@ class normalMapServicer(normalMap_gRPC.normalMapServicer):
         # First, create the bucket if it does not exist
         try:
             if not minio_client.bucket_exists(output_bucket):
-                log(f'creating bucket "{output_bucket}"')
+                log(request_id, f'creating bucket "{output_bucket}"')
                 minio_client.make_bucket(output_bucket)
-                list_buckets()
+                list_buckets(request_id)
         except Exception as e:
-            log(f'error creating bucket or checking if it exists: {e}')
-            list_buckets()
+            err_msg = f'error creating bucket {output_bucket} or checking if it exists: {e}'
+            list_buckets(request_id)
+            return rest_response(request_id, start, msg=err_msg, status=500)
 
-        # upload the image to Minio
-        im = Image.fromarray(normal_map)
-        extension = out_file[out_file.rindex('.'):] # file extension, including the dot
-        log(f'image before saving has data type {type(im)}')
-        sys.stdout.flush()
-        # save to image, upload, then delete the local image
+        # save image locally, upload, then delete the local image
         # note: there is a race condition here which could cause issues, so I should put a catch around the deletion as well as the uploading
         # I don't really have a good way to deal with the race condition.
+        if os.path.exists(out_file):
+            # if the file already exists, then some other thread is working on uploading it.
+            # skip the upload and just return 200 OK
+            # the danger is that nobody will ever upload the file if one worker fails to unlink the local file
+            # Therefore, later in the code, we try to unlink the file until is works.
+            return rest_response(request_id, start, msg=f'Worker {hostname} creating normal map {out_file} for {in_file} in another thread', status=200)
         err_msg = ''
-        im.save(out_file) # extension[1:]
+        im = Image.fromarray(normal_map)
+        im.save(out_file)
         try:
             file_size = os.path.getsize(out_file)
-        except Exceptoin as e:
+        except Exception as e:
             err_msg = f'Error getting file size of file to upload (race condition area): {e}'
-        log(f'Saving {out_file}, file size {file_size} = {round(file_size / 1000, 2)} KB = {round(file_size / 1000000, 1)} MB')
+            return rest_response(request_id, start, msg=err_msg, status=500)
+        # now, actually upload
+        log(request_id, f'Saving {out_file}, file size {file_size} = {round(file_size / 1000, 2)} KB = {round(file_size / 1000000, 1)} MB')
         try:
             minio_client.fput_object(output_bucket, out_file, out_file)
         except Exception as e:
             err_msg = f'Worker firstPass: Error uploading to output bucket: {e}'
-        try:
-            os.unlink(out_file)
-        except Exception as e:
-            err_msg = f'Error deleting file (race condition area): {e}'
+        # delete the image we saved
+        while os.path.exists(out_file):
+            try:
+                os.unlink(out_file)
+            except Exception as e:
+                err_msg = f'Error deleting file (race condition area): {e}'
         if err_msg:
-            log(err_msg)
-            sys.stdout.flush()
-            return normalMap_proto.restResponse(msg=create_internal_error(err_msg), status=500)
+            return rest_response(request_id, start, msg=err_msg, status=500)
 
-        end = time.perf_counter()
-        delta = (end - start)*1000
-        log(f"First Passthrough (worker) took {delta} ms")
-        sys.stdout.flush()
         # return success 200
-        return normalMap_proto.restResponse(msg=f'Worker {hostname} created normal map {out_file} for {in_file}', status=200)
+        return rest_response(request_id, start, msg=f'Worker {hostname} created normal map {out_file} for {in_file}', status=200)
 
 
 '''Now, bind the gRPC services to the server'''
+# log the start of the program and log the hostname (should match pod name)
+log('worker', "Worker program starting")
+log('worker', f"Hostname: {hostname}")
+sys.stderr.flush()
+# start the gRPC server and add the servicer to the server
 server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
 normalMap_gRPC.add_normalMapServicer_to_server(normalMapServicer(), server)
 server.add_insecure_port('[::]:5001')

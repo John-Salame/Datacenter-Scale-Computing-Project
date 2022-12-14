@@ -16,3 +16,12 @@ then
 else
   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.5.1/deploy/static/provider/cloud/deploy.yaml
 fi
+
+# bulid the Docker images locally
+# Note: rest and worker use grpc built image as a base.
+cd grpc
+make build
+cd ../rest
+make build
+cd ../worker
+make build

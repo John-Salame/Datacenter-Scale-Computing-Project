@@ -56,7 +56,10 @@ With the potential for failure (uploading files that are not images) and varying
 * I have also introduced more error handling and more overhead to the worker and REST server due to logging, error handling, and packaging responses.
 * I have also added a shortcut to detect if another thread is handling the same output file as you in case multiple concurrent requests are coming in.
 * I also noticed that candyCane.bmp takes longer due to its special condition in the worker, and Grass Normal Map takes longer due to its .png file type; (for worker) candyCane.bmp takes 80-100 ms, while snow takes 30-50 ms and Grass Normal map takes more than 90 ms.
-* Total Request Time: 76.36 ms average using the `time_program.py` script (100 iterations).
+* Total Request Time using the `time_program.py` script (100 iterations):
+* * 77.81 ms for all files
+* * 99.32 ms for images
+* * 34.63 ms for non-images
 * Time taken by REST server: 
 * * 106.50 ms for images (averaging the last 5 results)
 * * 19.95 ms for non-images (averaging the last 5 results)
@@ -67,13 +70,22 @@ With the potential for failure (uploading files that are not images) and varying
 ##### Variety: Requests in Parallel
 Now we run two timing scripts in parallel with 50 requests each.
 
-* Total Request Time: 101.42 ms average using the `time_program.py` script (100 iterations).
-* Time taken by REST server: 
+* Total Request Time using the `time_program.py` script (100 iterations):
+* * 107.48 ms for all files
+* * 136.59 ms for images
+* * 54.41 ms for non-images
+* Time taken by REST server:
 * * 126.54 ms for images (averaging the last 5 results)
 * * 50.14 ms for non-images (averaging the last 5 results)
 * Time taken by worker:
 * * 104.16 seconds for images (averaging the last 5 results)
 * * 8.64 ms for non-images (averaging the last 5 results)
 
-With 4 scripts in parallel doing 25 requests each, the time per request jumps even higher. With 4 clients at once, the average request time is 176.35 ms.
+With 4 scripts in parallel doing 25 requests each, the time per request jumps even higher. With 4 clients at once, the average request time is as follows:
+
+* 170.75 ms for all files
+* 222.39 ms for images
+* 86.68 ms for non-images
+
+
 

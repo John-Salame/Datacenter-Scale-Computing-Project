@@ -87,5 +87,15 @@ With 4 scripts in parallel doing 25 requests each, the time per request jumps ev
 * 222.39 ms for images
 * 86.68 ms for non-images
 
+#### Timing with Encoding and Decoding Minio Data
+First, we will set up the infrastructure without encoding / decoding with protobuf. We simply use a lambda expression which returns the input (minio_encoder = minio_decoder = lambda data: data).  
+The file size is still the same as before. In particular, the only file size which changes between the input file and the generated normal map is 'Grass Normal Map.png' since a png uses compression. The size of this file right now is 216.9 KiB (input) and 64.5 KiB (output).
+
+With Google Protocol Buffer encoding and decoding Minio files, the file size does not change much or change at all. However, somehow the queries sped up again. I am not sure what could have caused this, since the network transfer time should be the same and the CPU overhead should be greater than before.
+
+* 77.91 ms for all files
+* 94.20 ms for images
+* 38.60 ms for non-images
+
 
 

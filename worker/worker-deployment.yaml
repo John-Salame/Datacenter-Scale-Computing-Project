@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: master
-        image: worker:latest
+        image: worker:protobuf
         imagePullPolicy: Never
         resources:
           requests:

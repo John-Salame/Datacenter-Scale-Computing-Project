@@ -17,7 +17,7 @@ def help():
 
 # Do queries in series. Later, I may run two scripts at the same time or do a fork in this script to simulate simultaneous requests.
 reps = 100
-mode = ''
+mode = 'all files'
 if len(sys.argv) > 1:
     arg = sys.argv[1]
     if arg == '-h' or 'help' in arg:

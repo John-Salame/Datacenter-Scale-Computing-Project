@@ -1,4 +1,4 @@
-VERSION=v2
+VERSION=protobuf
 DOCKERUSER=""
 
 build:

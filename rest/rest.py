@@ -14,17 +14,32 @@ import normalMap_pb2_grpc as normalMap_gRPC
 
 app = Flask(__name__)
 minio_client = Minio("minio:9000", secure=False, access_key='rootuser', secret_key='rootpass123') # use minio as the hostname of the Minio server to talk with
-
-# log the start of the program and log the hostname (should match pod name)
-print("REST program starting")
 os.system("hostname > hostname.txt")
 with open("hostname.txt", "r") as f:
-    hostname = f.read()
-print(f"Hostname: {hostname}")
+    hostname = f.read().replace('\n', '')
+
+# https://developers.google.com/protocol-buffers/docs/pythontutorial
+# choose the mode for encoding/marshalling data as it goes to/from Minio
+protobuf_mode = True
+minio_encoder = None
+minio_decoder = None
+if protobuf_mode:
+    minio_encoder = lambda data: normalMap_proto.image(img=data).SerializeToString()
+    minio_decoder = lambda data: normalMap_proto.image().FromString(data).img
+else:
+    minio_encoder = lambda data: data
+    minio_decoder = lambda data: data
 
 # helper function - print log that is visible to kubectl logs
 def log(request_id, msg):
     print(f'{request_id} {msg}', file=sys.stderr)
+
+# print how long the function took to run
+def print_time(request_id, start):
+    end = time.perf_counter()
+    delta = (end - start)*1000
+    log(request_id, f"First Passthrough (REST) took {delta} ms")
+    log('-', "--------------------------------------------")
 
 # list the Minio buckets that exist
 def list_buckets(request_id):
@@ -62,6 +77,17 @@ def index():
       <input type="submit" value="Submit">
     </form>'''
 
+@app.route('/image/<string:bucket>/<string:filename>')
+def download_image(bucket, filename):
+    log('download_image', f'/image/{bucket}/{filename}')
+    response = minio_client.get_object(bucket, filename)
+    img = minio_decoder(response.data)
+    extension = filename[filename.rindex('.'):]
+    return send_file(
+        io.BytesIO(img),
+        mimetype=f'image/{extension[1:]}'
+    )
+
 @app.route('/produceFirstPassthrough', methods=['POST'])
 def produceFirstPassthrough():
     start = time.perf_counter()
@@ -96,8 +122,7 @@ def produceFirstPassthrough():
         list_buckets(request_id)
 
     # Then, use BytesIO so we can upload the image without creating temporary files
-    '''TO-DO: use protobuf to compress the image before sending to Minio'''
-    img_stream = io.BytesIO(img)
+    img_stream = io.BytesIO(minio_encoder(img))
     # https://stackoverflow.com/questions/26827055/python-how-to-get-bytesio-allocated-memory-length
     file_size = img_stream.getbuffer().nbytes
     log(request_id, f'Saving {in_filename}, file size {file_size} = {round(file_size / 1000, 2)} KB = {round(file_size / 1000000, 1)} MB')
@@ -116,11 +141,23 @@ def produceFirstPassthrough():
         normalMapStub = normalMap_gRPC.normalMapStub(channel)
         workerInput = normalMap_proto.gRPCWorkerInput(inFile=in_filename, outFile=out_filename)
         response = initiateWorkerFirstPassthrough(normalMapStub, workerInput)
+    # If the worker succeeded, then return an HTML image
+    if response.status == 200:
+        # http://talkerscode.com/howto/how-to-divide-html-page-into-two-parts-horizontally.php
+        img_el_input = f'<p>Input</p><image id="input" src="/image/{input_bucket}/{in_filename}">'
+        img_el_normal = f'<p>First Passthrough</p><image id="firstPassthrough" src="/image/{output_bucket}/{out_filename}">'
+        half_div = '<div style="width: 50%;">'
+        page = f'<div>{half_div}{img_el_input}</div>{half_div}{img_el_normal}</div></div>'
+        print_time(request_id, start)
+        return Response(response=page, status=response.status, mimetype='text/html')
 
-    end = time.perf_counter()
-    delta = (end - start)*1000
-    log(request_id, f"First Passthrough (REST) took {delta} ms")
+    # For status other than 200, return the error from the worker
+    print_time(request_id, start)
     return Response(response=response.msg, status=response.status, mimetype='text/html')
 
+# log the start of the program and log the hostname (should match pod name)
+print("REST program starting")
+print(f"Hostname: {hostname}")
+log('worker', f"Protobuf encoding/decoding on Minio: {protobuf_mode}")
 # start flask app
 app.run(host="0.0.0.0", port=5000)

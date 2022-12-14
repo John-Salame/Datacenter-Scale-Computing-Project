@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: master
-        image: rest:latest
+        image: rest:protobuf
         imagePullPolicy: Never
         resources:
           requests:

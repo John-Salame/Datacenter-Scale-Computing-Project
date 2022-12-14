@@ -1,5 +1,6 @@
 from flask import Flask, request, Response, send_file
 from minio import Minio
+from minio import error as minio_error
 import jsonpickle
 import base64
 import hashlib
@@ -58,6 +59,27 @@ def create_bad_request(message):
 def create_internal_error(message):
     return f'<!doctype html><html lang=en><title>500 Internal Server Error</title>\n<h1>Internal Server Error</h1><p>{message}</p>'
 
+def create_not_found():
+    return f'<!doctype html><html lang=en><title>404 Not Found</title>\n<h1>Not Found</h1><p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.</p>'
+
+def rest_response(request_id, start, msg, status):
+    html_constructor = {
+        200: lambda msg: '<p>' + msg + '</p>',
+        400: lambda msg: create_bad_request(msg),
+        500: lambda msg: create_internal_error(msg)
+    }
+    log(request_id, msg)
+    print_time(request_id, start)
+    return Response(response=html_constructor[status](msg), status=status, mimetype='text/html')
+
+def first_passthrough_html(request_id, start, input_bucket, in_filename, output_bucket, out_filename):
+    # http://talkerscode.com/howto/how-to-divide-html-page-into-two-parts-horizontally.php
+    img_el_input = f'<p>Input</p><image id="input" src="/image/{input_bucket}/{in_filename}">'
+    img_el_normal = f'<p>First Passthrough</p><image id="firstPassthrough" src="/image/{output_bucket}/{out_filename}">'
+    half_div = '<div style="width: 50%;">'
+    page = f'<div>{half_div}{img_el_input}</div>{half_div}{img_el_normal}</div></div>'
+    return page
+
 '''gRPC Client Implementation'''
 def initiateWorkerFirstPassthrough(stub, workerInput):
     return stub.normalMapFirstPassthrough(workerInput)
@@ -80,7 +102,10 @@ def index():
 @app.route('/image/<string:bucket>/<string:filename>')
 def download_image(bucket, filename):
     log('download_image', f'/image/{bucket}/{filename}')
-    response = minio_client.get_object(bucket, filename)
+    try:
+        response = minio_client.get_object(bucket, filename)
+    except Exception as e:
+        return create_not_found()
     img = minio_decoder(response.data)
     extension = filename[filename.rindex('.'):]
     return send_file(
@@ -98,20 +123,22 @@ def produceFirstPassthrough():
     What to look out for:
     Content-Type: multipart/form-data; boundary=---------------------------5926289141479646928502894430
     '''
-    content_type = request.headers['Content-Type']
+    content_type = r.headers['Content-Type']
     if not 'multipart/form-data' in content_type:
-        err_msg = create_bad_request('The form must send an image with multipart/form-data encoding.')
-        return Response(response=err_msg, status=400, mimetype='text/html')
+        err_msg = create_bad_request(f'The form must send an image with multipart/form-data encoding.\nForm: {r.data}')
+        return rest_response(request_id=fp+str(start), start=start, msg=err_msg, status=400)
     # Easily dealing with multipart/form-data: https://www.techiediaries.com/python-requests-upload-file-post-multipart-form-data/
     my_file = r.files['file']
     img = my_file.read() # should be 'bytes object' binary data matching file contents
     in_filename = my_file.filename
     request_id = 'fp' + hashlib.md5((str(start) + in_filename).encode('utf-8')).hexdigest()
     log(request_id, f'/produceFirstPassthrough received file {in_filename}')
+    # Name the output (first passthrough) file based on the hash of the image
+    # https://stackoverflow.com/questions/5297448/how-to-get-md5-sum-of-a-string-using-python
+    extension = in_filename[in_filename.rindex('.'):]
+    out_filename = hashlib.md5(img).hexdigest() + extension
 
-    # now, upload the image to Minio
-
-    # First, create the bucket if it does not exist
+    # Create the Minio bucket if it does not exist
     try:
         if not minio_client.bucket_exists(input_bucket):
             log(request_id, f'creating bucket "{input_bucket}"')
@@ -121,7 +148,23 @@ def produceFirstPassthrough():
         log(request_id, f'error creating bucket {input_bucket} or checking if it exists: {e}')
         list_buckets(request_id)
 
-    # Then, use BytesIO so we can upload the image without creating temporary files
+    # if the file already has a normal map. We do this instead of checking for the input file because we want to return error 400 from the worker if input is not an image.
+    try:
+        minio_client.stat_object(output_bucket, out_filename)
+        log(request_id, f'{in_filename} already exists! Skipping upload.')
+        page = first_passthrough_html(request_id, start, input_bucket, in_filename, output_bucket, out_filename)
+        return rest_response(request_id, start, msg=page, status=200)
+    except minio_error.S3Error as s3_err:
+        if not (s3_err.code == 'NoSuchKey' or s3_err.code == 'NoSuchBucket'):
+            err_msg = f'Exception listing Minio file {in_filename}: {s3_err}'
+            return rest_response(request_id, start, msg=err_msg, status=500)
+    except Exception as e:
+        log(request_id, type(e))
+        err_msg = f'Exception listing Minio file {in_filename}: {e}'
+        return rest_response(request_id, start, msg=err_msg, status=500)
+
+    # Upload the file to Minio
+    # Use BytesIO so we can upload the image without creating temporary files
     img_stream = io.BytesIO(minio_encoder(img))
     # https://stackoverflow.com/questions/26827055/python-how-to-get-bytesio-allocated-memory-length
     file_size = img_stream.getbuffer().nbytes
@@ -129,11 +172,6 @@ def produceFirstPassthrough():
     # https://stackoverflow.com/questions/55223401/minio-python-client-upload-bytes-directly
     minio_client.put_object(input_bucket, in_filename, img_stream, file_size)
     log(request_id, f'Upload input file compete! ({in_filename})')
-
-    # Name the output (first passthrough) file based on the hash of the image
-    # https://stackoverflow.com/questions/5297448/how-to-get-md5-sum-of-a-string-using-python
-    extension = in_filename[in_filename.rindex('.'):]
-    out_filename = hashlib.md5(img).hexdigest() + extension
     log(request_id, f'Signal firstPassthrough worker: {in_filename} -> {out_filename}')
     # Create a new gRPC channel for each request in case the old worker dies
     # later, maybe I can make a global permanent channel that tries to repair itself here if it dies
@@ -143,17 +181,11 @@ def produceFirstPassthrough():
         response = initiateWorkerFirstPassthrough(normalMapStub, workerInput)
     # If the worker succeeded, then return an HTML image
     if response.status == 200:
-        # http://talkerscode.com/howto/how-to-divide-html-page-into-two-parts-horizontally.php
-        img_el_input = f'<p>Input</p><image id="input" src="/image/{input_bucket}/{in_filename}">'
-        img_el_normal = f'<p>First Passthrough</p><image id="firstPassthrough" src="/image/{output_bucket}/{out_filename}">'
-        half_div = '<div style="width: 50%;">'
-        page = f'<div>{half_div}{img_el_input}</div>{half_div}{img_el_normal}</div></div>'
-        print_time(request_id, start)
-        return Response(response=page, status=response.status, mimetype='text/html')
+        page = first_passthrough_html(request_id, start, input_bucket, in_filename, output_bucket, out_filename)
+        return rest_response(request_id, start, msg=page, status=200)
 
     # For status other than 200, return the error from the worker
-    print_time(request_id, start)
-    return Response(response=response.msg, status=response.status, mimetype='text/html')
+    return rest_response(request_id, start, msg=response.msg, status=response.status)
 
 # log the start of the program and log the hostname (should match pod name)
 print("REST program starting")

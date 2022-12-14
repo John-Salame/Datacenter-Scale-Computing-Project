@@ -245,14 +245,8 @@ class normalMapServicer(normalMap_gRPC.normalMapServicer):
         # write image data into the BytesIO so we can encode it, then save it in the file we will upload.
         minio_data_pre_encoding = io.BytesIO()
         im.save(minio_data_pre_encoding, format=extension[1:])
-        # minio_data = minio_encoder(minio_data_pre_encoding.getvalue())
         minio_data = io.BytesIO(minio_encoder(minio_data_pre_encoding.getvalue()))
-        '''
-        with open(out_file, 'wb') as f:
-            f.write(minio_data)
-        '''
         try:
-            # file_size = os.path.getsize(out_file)
             file_size = minio_data.getbuffer().nbytes
         except Exception as e:
             err_msg = f'Error getting file size of file to upload (race condition area): {e}'

@@ -97,5 +97,10 @@ With Google Protocol Buffer encoding and decoding Minio files, the file size doe
 * 94.20 ms for images
 * 38.60 ms for non-images
 
+#### Checking if the normal map already exists
+This method greatly reduces the amount of time the requests take because it decreases large-sized traffic to Minio and the workers. The firstPassthrough REST endpoint will check for the name of the normal map the file would produce on Minio. If the normal map exists on Minio, then do not upload the file to Minio and do not signal the worker to do anything.  
+The non-image files will still be uploaded to Minio and the worker will still be signalled to download the file and attempt to create a normal map out of it.
+
+
 
 

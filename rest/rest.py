@@ -148,19 +148,40 @@ def produceFirstPassthrough():
         log(request_id, f'error creating bucket {input_bucket} or checking if it exists: {e}')
         list_buckets(request_id)
 
-    # if the file already has a normal map. We do this instead of checking for the input file because we want to return error 400 from the worker if input is not an image.
+    # If you want faster program which may permanently fail on some files and which shows blank images for non-image input, then use this
+    # Otherwise, comment out this block and use the block below.
+    '''
+    # if the file already exists in Minio, skip the upload
     try:
-        minio_client.stat_object(output_bucket, out_filename)
+        minio_client.stat_object(input_bucket, in_filename)
         log(request_id, f'{in_filename} already exists! Skipping upload.')
         page = first_passthrough_html(request_id, start, input_bucket, in_filename, output_bucket, out_filename)
         return rest_response(request_id, start, msg=page, status=200)
     except minio_error.S3Error as s3_err:
-        if not (s3_err.code == 'NoSuchKey' or s3_err.code == 'NoSuchBucket'):
+        if not (s3_err.code == 'NoSuchKey'):
             err_msg = f'Exception listing Minio file {in_filename}: {s3_err}'
             return rest_response(request_id, start, msg=err_msg, status=500)
     except Exception as e:
         log(request_id, type(e))
         err_msg = f'Exception listing Minio file {in_filename}: {e}'
+        return rest_response(request_id, start, msg=err_msg, status=500)
+    '''
+
+    # If you want to have 400 Bad Request responses to the images, then
+    # comment out the code block above this (checking input files in Minio) and uncomment this
+    try:
+        # if the file already has a normal map. We do this instead of checking for the input file because we want to return error 400 from the worker if input is not an image.
+        minio_client.stat_object(output_bucket, out_filename)
+        log(request_id, f'Normal map {out_filename} for {in_filename} already exists! Skipping upload.')
+        page = first_passthrough_html(request_id, start, input_bucket, in_filename, output_bucket, out_filename)
+        return rest_response(request_id, start, msg=page, status=200)
+    except minio_error.S3Error as s3_err:
+        if not (s3_err.code == 'NoSuchKey' or s3_err.code == 'NoSuchBucket'):
+            err_msg = f'Exception listing Minio file {out_filename}: {s3_err}'
+            return rest_response(request_id, start, msg=err_msg, status=500)
+    except Exception as e:
+        log(request_id, type(e))
+        err_msg = f'Exception listing Minio file {out_filename}: {e}'
         return rest_response(request_id, start, msg=err_msg, status=500)
 
     # Upload the file to Minio

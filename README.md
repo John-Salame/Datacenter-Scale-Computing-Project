@@ -101,6 +101,31 @@ With Google Protocol Buffer encoding and decoding Minio files, the file size doe
 This method greatly reduces the amount of time the requests take because it decreases large-sized traffic to Minio and the workers. The firstPassthrough REST endpoint will check for the name of the normal map the file would produce on Minio. If the normal map exists on Minio, then do not upload the file to Minio and do not signal the worker to do anything.  
 The non-image files will still be uploaded to Minio and the worker will still be signalled to download the file and attempt to create a normal map out of it.
 
+##### Method 1
+Check if input file exists in Minio.  
+This method has the potential to permanently deny the creation of normal maps and produce permanently broken requests if the program encounters an error between uploading the input file on REST and uploading the resulting normal map on the worker. This method also displays a webpage with two broken images for requests using non-image input.
 
+* 100 requests in series
+* * 33.88 ms for all files
+* * 28.46 ms for images
+* * 27.18 ms for non-images
+* 25 requests each by 4 simultaneous clients
+* * 86.89 ms for all files
+
+##### Method 2
+Check if the normal map exists in Minio.  
+This method correctly displays 400 Bad Request for non-image input. However, it is slower than method 1 especially for non-images, which must be passed to the worker every time.  
+One thing we notice is that the requests are faster now for images and for requests in general, but they have become slower for non-images. This is because of the network overhead of checking if the normal map exists in Minio.  
+
+In terms of 100 simultaneous requests, the average request is 40 ms faster than before (compare to "timing with Encoding and Decoding Minio Data), while the image request is 60 ms faster and the non-image request is 5 ms slower. In the 4 simultaneous clients metric, the average request is 26 ms faster, while it is 100 ms faster for images and 50 ms slower for non-images.
+
+* 100 requests in series
+* * 39.92 ms for all files
+* * 32.85 ms for images
+* * 43.31 ms for non-images
+* 25 requests each by 4 simultaneous clients
+* * 144.46 ms for all files
+* * 121.01 ms for images
+* * 136.66 ms for non-images
 
 

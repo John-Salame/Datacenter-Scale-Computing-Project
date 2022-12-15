@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 
 # Start the cluster
-minikube start
+if ! which minikube;
+then
+  echo "Please start up your cluster manually since you do not have minikube"
+fi
+minikube start || exit 1
 # Allow Docker to push to Minikube local repository
 eval $(minikube -p minikube docker-env)
 # Start Minio
